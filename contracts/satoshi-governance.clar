@@ -288,3 +288,122 @@
     )
   )
 )
+
+;; Treasury management
+
+(define-read-only (get-treasury-balance)
+  (ok (var-get treasury-balance))
+)
+
+(define-public (donate-to-treasury (amount uint))
+  (let (
+    (caller tx-sender)
+  )
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (try! (stx-transfer? amount caller (as-contract tx-sender)))
+    (var-set treasury-balance (+ (var-get treasury-balance) amount))
+    (if (is-member caller)
+      (begin
+        (try! (update-member-reputation caller 2)) ;; Increase reputation for donating
+        (ok true)
+      )
+      (ok true)
+    )
+  )
+)
+
+;; Reputation system
+
+(define-read-only (get-member-reputation (user principal))
+  (match (map-get? members user)
+    member-data (ok (get reputation member-data))
+    ERR-NOT-MEMBER
+  )
+)
+
+(define-public (decay-inactive-members)
+  (let (
+    (caller tx-sender)
+    (current-block block-height)
+  )
+    (asserts! (is-eq caller CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    (map-set members caller
+      (match (map-get? members caller)
+        member-data 
+        (if (> (- current-block (get last-interaction member-data)) u4320) ;; Approx. 30 days of inactivity
+          (merge member-data {reputation: (/ (get reputation member-data) u2)}) ;; Halve the reputation
+          member-data
+        )
+        { reputation: u0, stake: u0, last-interaction: current-block }
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Cross-DAO collaboration
+
+(define-public (propose-collaboration (partner-dao principal) (proposal-id uint))
+  (let (
+    (caller tx-sender)
+    (collaboration-id (+ (var-get total-proposals) u1))
+  )
+    (asserts! (is-member caller) ERR-NOT-MEMBER)
+    (asserts! (is-active-proposal proposal-id) ERR-INVALID-PROPOSAL)
+    (asserts! (not (is-eq partner-dao caller)) ERR-INVALID-PROPOSAL)
+    (map-set collaborations collaboration-id
+      {
+        partner-dao: partner-dao,
+        proposal-id: proposal-id,
+        status: "proposed"
+      }
+    )
+    (var-set total-proposals collaboration-id)
+    (ok collaboration-id)
+  )
+)
+
+(define-public (accept-collaboration (collaboration-id uint))
+  (let (
+    (caller tx-sender)
+  )
+    (asserts! (is-valid-collaboration-id collaboration-id) ERR-INVALID-PROPOSAL)
+    (match (map-get? collaborations collaboration-id)
+      collaboration 
+      (begin
+        (asserts! (is-eq caller (get partner-dao collaboration)) ERR-NOT-AUTHORIZED)
+        (asserts! (is-eq (get status collaboration) "proposed") ERR-INVALID-PROPOSAL)
+        ;; Add additional validation before setting status
+        (asserts! (is-valid-collaboration-id collaboration-id) ERR-INVALID-PROPOSAL)
+        (map-set collaborations collaboration-id (merge collaboration {status: "accepted"}))
+        (ok true)
+      )
+      ERR-INVALID-PROPOSAL
+    )
+  )
+)
+
+;; Getter functions
+
+(define-read-only (get-proposal (proposal-id uint))
+  (ok (unwrap! (map-get? proposals proposal-id) ERR-INVALID-PROPOSAL))
+)
+
+(define-read-only (get-member (user principal))
+  (ok (unwrap! (map-get? members user) ERR-NOT-MEMBER))
+)
+
+(define-read-only (get-total-members)
+  (ok (var-get total-members))
+)
+
+(define-read-only (get-total-proposals)
+  (ok (var-get total-proposals))
+)
+
+;; Initialize contract
+(begin
+  (var-set total-members u0)
+  (var-set total-proposals u0)
+  (var-set treasury-balance u0)
+)
