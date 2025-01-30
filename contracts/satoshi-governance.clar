@@ -106,3 +106,65 @@
     (+ (* reputation u10) stake)
   )
 )
+
+(define-private (update-member-reputation (user principal) (change int))
+  (match (map-get? members user)
+    member-data 
+    (let (
+      (new-reputation (to-uint (+ (to-int (get reputation member-data)) change)))
+      (updated-data (merge member-data {reputation: new-reputation, last-interaction: block-height}))
+    )
+      (map-set members user updated-data)
+      (ok new-reputation)
+    )
+    ERR-NOT-MEMBER
+  )
+)
+
+;; Public functions
+
+;; Membership management
+
+(define-public (join-dao)
+  (let (
+    (caller tx-sender)
+  )
+    (asserts! (not (is-member caller)) ERR-ALREADY-MEMBER)
+    (map-set members caller {reputation: u1, stake: u0, last-interaction: block-height})
+    (var-set total-members (+ (var-get total-members) u1))
+    (ok true)
+  )
+)
+
+(define-public (leave-dao)
+  (let (
+    (caller tx-sender)
+  )
+    (asserts! (is-member caller) ERR-NOT-MEMBER)
+    (map-delete members caller)
+    (var-set total-members (- (var-get total-members) u1))
+    (ok true)
+  )
+)
+
+(define-public (stake-tokens (amount uint))
+  (let (
+    (caller tx-sender)
+  )
+    (asserts! (is-member caller) ERR-NOT-MEMBER)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    (try! (stx-transfer? amount caller (as-contract tx-sender)))
+    (match (map-get? members caller)
+      member-data 
+      (let (
+        (new-stake (+ (get stake member-data) amount))
+        (updated-data (merge member-data {stake: new-stake, last-interaction: block-height}))
+      )
+        (map-set members caller updated-data)
+        (var-set treasury-balance (+ (var-get treasury-balance) amount))
+        (ok new-stake)
+      )
+      ERR-NOT-MEMBER
+    )
+  )
+)
